@@ -85,7 +85,7 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.gson)
     implementation("org.tukaani:xz:1.12")
-    implementation("com.github.luben:zstd-jni:1.5.7-28@aar")
+    implementation("com.github.luben:zstd-jni:1.5.7-12@aar")
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)

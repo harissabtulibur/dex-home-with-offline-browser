@@ -117,10 +117,10 @@ class KnowledgeVaultRepository(
                 var skipped = 0
                 var locations = 0
 
-                listOf(driveManager.internalDownloadsDir, driveManager.internalVaultDir).forEach { dir ->
+                for (dir in listOf(driveManager.internalDownloadsDir, driveManager.internalVaultDir)) {
                     if (dir.exists()) {
                         locations++
-                        dir.walkTopDown().maxDepth(3).forEach { file ->
+                        for (file in dir.walkTopDown().maxDepth(3)) {
                             if (file.isFile && isSupportedAutoImportFile(file.name)) {
                                 val key = "${file.name.lowercase()}|${file.length()}"
                                 if (seenUris.contains(file.absolutePath) || seenNameSizes.contains(key)) {

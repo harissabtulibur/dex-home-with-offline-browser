@@ -627,7 +627,7 @@ fun PdfViewerScreen(
                     renderBounded(1080, 1920, Bitmap.Config.ARGB_8888)
                 } catch (_: OutOfMemoryError) {
                     System.gc()
-                    renderBounded(720, 1280, Bitmap.Config.RGB_565)
+                    renderBounded(540, 960, Bitmap.Config.ARGB_8888)
                 }
             }
         }

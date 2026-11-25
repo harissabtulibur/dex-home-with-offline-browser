@@ -374,7 +374,7 @@ private fun CyberDeckRootShell(
                     else -> {
                         val intent = app.vaultRepository.buildExternalViewIntent(item)
                         if (intent != null) {
-                            runCatching { app.startActivity(intent) }
+                            runCatching { context.startActivity(intent) }
                                 .onFailure { showMessage("No installed app handles ${item.fileType.label}") }
                         }
                     }
