@@ -36,15 +36,23 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.PushPin
@@ -87,8 +95,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -107,6 +117,8 @@ import com.offlinecyberdeck.bookmarks.HistoryScreen
 import com.offlinecyberdeck.browser.BrowserScreen
 import com.offlinecyberdeck.browser.BrowserViewModel
 import com.offlinecyberdeck.core.database.entity.AppSettingsEntity
+import com.offlinecyberdeck.core.format.Formatters
+import com.offlinecyberdeck.core.model.DownloadStatus
 import com.offlinecyberdeck.core.model.LibraryFileType
 import com.offlinecyberdeck.downloads.DownloadsScreen
 import com.offlinecyberdeck.library.LibraryScreen
@@ -175,6 +187,7 @@ fun DesktopLauncherScreen(
     val windows = remember { mutableStateListOf<DesktopWindowState>() }
     var topZ by remember { mutableIntStateOf(10) }
     var appDrawerOpen by remember { mutableStateOf(false) }
+    var notifPanelOpen by remember { mutableStateOf(false) }
     var launchExternalFloating by remember { mutableStateOf(true) }
     var externalCascadeIndex by remember { mutableIntStateOf(0) }
 
@@ -183,7 +196,11 @@ fun DesktopLauncherScreen(
     var showSystemApps by remember { mutableStateOf(false) }
     var permStatus by remember { mutableStateOf(DesktopLauncherManager.inspectPermissions(context)) }
     var clockText by remember { mutableStateOf("") }
-    var batteryPct by remember { mutableStateOf<Int?>(null) }
+    var dateText by remember { mutableStateOf("") }
+    var batteryStatus by remember { mutableStateOf(DesktopLauncherManager.readBatteryStatus(context)) }
+    val systemNotifications by NotificationCenterStore.notifications.collectAsStateWithLifecycle()
+    val downloads by app.database.downloadDao().observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val driveStatus by app.driveManager.status.collectAsStateWithLifecycle()
 
     // Open Cyber Deck Browser as a floating DeX window on initial start so desktop & controls are visible
     LaunchedEffect(Unit) {
@@ -208,6 +225,7 @@ fun DesktopLauncherScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 permStatus = DesktopLauncherManager.inspectPermissions(context)
+                batteryStatus = DesktopLauncherManager.readBatteryStatus(context)
                 scope.launch {
                     installedApps = DesktopLauncherManager.loadInstalledApps(context)
                 }
@@ -217,12 +235,14 @@ fun DesktopLauncherScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Live clock & battery status
+    // Live clock, date & battery status for fullscreen taskbar
     LaunchedEffect(Unit) {
         while (true) {
-            clockText = DateFormat.format("HH:mm", Date()).toString()
-            batteryPct = DesktopLauncherManager.readBatteryPercent(context)
-            delay(20_000L)
+            val now = Date()
+            clockText = DateFormat.format("HH:mm", now).toString()
+            dateText = DateFormat.format("dd MMM", now).toString()
+            batteryStatus = DesktopLauncherManager.readBatteryStatus(context)
+            delay(15_000L)
         }
     }
 
@@ -306,6 +326,16 @@ fun DesktopLauncherScreen(
         windows.removeAll { it.id == winId }
     }
 
+    fun minimizeAllWindows() {
+        for (i in windows.indices) {
+            if (!windows[i].isMinimized) {
+                windows[i] = windows[i].copy(isMinimized = true)
+            }
+        }
+        appDrawerOpen = false
+        notifPanelOpen = false
+    }
+
     fun togglePinExternalApp(pkg: String) {
         scope.launch {
             val next = if (pkg in pinnedPackages) {
@@ -372,13 +402,15 @@ fun DesktopLauncherScreen(
         }
     }
 
-    BackHandler(enabled = appDrawerOpen || windows.any { !it.isMinimized }) {
-        if (appDrawerOpen) {
-            appDrawerOpen = false
-        } else {
-            val topWin = windows.filter { !it.isMinimized }.maxByOrNull { it.zIndex }
-            if (topWin != null) {
-                toggleMinimize(topWin.id)
+    BackHandler(enabled = appDrawerOpen || notifPanelOpen || windows.any { !it.isMinimized }) {
+        when {
+            notifPanelOpen -> notifPanelOpen = false
+            appDrawerOpen -> appDrawerOpen = false
+            else -> {
+                val topWin = windows.filter { !it.isMinimized }.maxByOrNull { it.zIndex }
+                if (topWin != null) {
+                    toggleMinimize(topWin.id)
+                }
             }
         }
     }
@@ -677,6 +709,7 @@ fun DesktopLauncherScreen(
                                                     onOpenBookmarks = { openOrFocusWindow(DesktopWindowKind.BOOKMARKS) },
                                                     onOpenHistory = { openOrFocusWindow(DesktopWindowKind.HISTORY) },
                                                     onOpenSettings = { openOrFocusWindow(DesktopWindowKind.SETTINGS) },
+                                                    onReturnToLauncher = { toggleMinimize(win.id) },
                                                     onShowMessage = onShowMessage
                                                 )
                                             }
@@ -1036,6 +1069,260 @@ fun DesktopLauncherScreen(
                     }
                 }
             }
+            // NOTIFICATION CENTER OVERLAY (Taskbar Right Panel)
+            if (notifPanelOpen) {
+                val activeDownloads = downloads.filter {
+                    it.status == DownloadStatus.DOWNLOADING ||
+                        it.status == DownloadStatus.QUEUED ||
+                        it.status == DownloadStatus.FAILED
+                }.take(3)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(9998f)
+                        .background(Color.Black.copy(alpha = 0.4f))
+                        .clickable { notifPanelOpen = false }
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                        shadowElevation = 16.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(12.dp)
+                            .widthIn(max = 420.dp)
+                            .fillMaxWidth(0.92f)
+                            .heightIn(max = (deskHeightDp * 0.82f).dp)
+                            .clickable(enabled = false) {}
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.NotificationsActive,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text("Notifikasi & Status", style = MaterialTheme.typography.titleMedium)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (systemNotifications.any { it.isClearable }) {
+                                        IconButton(onClick = { NotificationCenterStore.clearAllClearable() }) {
+                                            Icon(Icons.Filled.DeleteSweep, contentDescription = "Bersihkan Semua")
+                                        }
+                                    }
+                                    IconButton(onClick = { notifPanelOpen = false }) {
+                                        Icon(Icons.Filled.Close, contentDescription = "Tutup")
+                                    }
+                                }
+                            }
+
+                            if (!permStatus.notificationAccessGranted) {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = DeckAmber.copy(alpha = 0.16f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            "Tampilkan Notifikasi WA, YouTube & Sistem di sini",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = DeckAmber
+                                        )
+                                        Text(
+                                            "Aktifkan Akses Notifikasi agar saat Fullscreen semua notif tetap muncul di taskbar.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        OutlinedButton(
+                                            onClick = {
+                                                onShowMessage(NotificationCenterStore.openNotificationAccessSettings(context))
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Aktifkan Akses Notifikasi")
+                                        }
+                                    }
+                                }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Built-in Cyber Deck live alerts
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            notifPanelOpen = false
+                                            openOrFocusWindow(DesktopWindowKind.SETTINGS)
+                                        }
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(
+                                            text = if (driveStatus.isConnected) "SSD / Deck Drive Terhubung"
+                                            else "Deck Drive Belum Terpasang",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = if (driveStatus.isConnected) DeckGreen else DeckAmber
+                                        )
+                                        Text(
+                                            text = if (driveStatus.isConnected) driveStatus.displayName
+                                            else "Colok USB-C SSD atau atur folder di Settings → Deck Drive.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                activeDownloads.forEach { dl ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                notifPanelOpen = false
+                                                openOrFocusWindow(DesktopWindowKind.DOWNLOADS)
+                                            }
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text(
+                                                text = "Download (${dl.status.label}): ${dl.fileName}",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            val prog = if (dl.totalBytes > 0) {
+                                                "${Formatters.formatBytes(dl.bytesDownloaded)} / ${Formatters.formatBytes(dl.totalBytes)}"
+                                            } else {
+                                                Formatters.formatBytes(dl.bytesDownloaded)
+                                            }
+                                            Text(
+                                                text = dl.errorMessage ?: prog,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (dl.status == DownloadStatus.FAILED) Color(0xFFEF4444)
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+
+                                HorizontalDivider()
+
+                                if (systemNotifications.isEmpty()) {
+                                    Text(
+                                        text = if (permStatus.notificationAccessGranted) {
+                                            "Belum ada notifikasi masuk saat ini."
+                                        } else {
+                                            "Izin Akses Notifikasi belum aktif — gunakan tombol di atas untuk menampilkan notif aplikasi lain."
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 8.dp)
+                                    )
+                                } else {
+                                    systemNotifications.forEach { item ->
+                                        Card(
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                            ),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    val sent = runCatching {
+                                                        item.contentIntent?.send()
+                                                        true
+                                                    }.getOrDefault(false)
+                                                    if (!sent) {
+                                                        launchExternalPackage(item.packageName)
+                                                    }
+                                                    notifPanelOpen = false
+                                                }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(10.dp),
+                                                verticalAlignment = Alignment.Top,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                InstalledAppIcon(
+                                                    packageName = item.packageName,
+                                                    modifier = Modifier.size(30.dp)
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Text(
+                                                            text = item.appLabel,
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            color = MaterialTheme.colorScheme.primary
+                                                        )
+                                                        Text(
+                                                            text = DateFormat.format("HH:mm", Date(item.postedAtMs)).toString(),
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = item.title,
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (item.text.isNotBlank()) {
+                                                        Text(
+                                                            text = item.text,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+                                                if (item.isClearable) {
+                                                    IconButton(
+                                                        onClick = { NotificationCenterStore.dismiss(item.key) },
+                                                        modifier = Modifier.size(24.dp)
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Filled.Close,
+                                                            contentDescription = "Hapus Notifikasi",
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // BOTTOM DeX TASKBAR
@@ -1056,7 +1343,10 @@ fun DesktopLauncherScreen(
                     color = if (appDrawerOpen) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.primaryContainer,
                     shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.clickable { appDrawerOpen = !appDrawerOpen }
+                    modifier = Modifier.clickable {
+                        notifPanelOpen = false
+                        appDrawerOpen = !appDrawerOpen
+                    }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
@@ -1075,6 +1365,32 @@ fun DesktopLauncherScreen(
                             style = MaterialTheme.typography.labelLarge,
                             color = if (appDrawerOpen) MaterialTheme.colorScheme.onPrimary
                             else MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+
+                Spacer(Modifier.width(6.dp))
+
+                // Quick Show Desktop / Minimize All Button (always returns to launcher desktop)
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.clickable { minimizeAllWindows() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.GridView,
+                            contentDescription = "Desktop Launcher",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Text(
+                            "Desktop",
+                            style = MaterialTheme.typography.labelMedium
                         )
                     }
                 }
@@ -1173,52 +1489,124 @@ fun DesktopLauncherScreen(
 
                 Spacer(Modifier.width(6.dp))
 
-                // Right System Tray
+                // Right System Tray (Notifications + Permissions + Classic Toggle + Net + Battery + Clock/Date)
+                val notifBadgeCount = systemNotifications.size + downloads.count {
+                    it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.FAILED
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Notification Bell + Badge
+                    Surface(
+                        color = if (notifPanelOpen) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.clickable {
+                            appDrawerOpen = false
+                            notifPanelOpen = !notifPanelOpen
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (notifBadgeCount > 0) Icons.Filled.NotificationsActive
+                                else Icons.Filled.Notifications,
+                                contentDescription = "Notifikasi",
+                                tint = if (notifBadgeCount > 0 || notifPanelOpen) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            if (notifBadgeCount > 0) {
+                                Text(
+                                    text = notifBadgeCount.toString(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
                     IconButton(
                         onClick = onShowPermissionsDialog,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             Icons.Filled.AdminPanelSettings,
                             contentDescription = "Izin DeX & Floating",
                             tint = if (permStatus.allCoreReady) DeckGreen else DeckAmber,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                     IconButton(
                         onClick = onSwitchToClassicMode,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             Icons.Filled.Fullscreen,
-                            contentDescription = "Mode Klasik Fullscreen",
-                            modifier = Modifier.size(18.dp)
+                            contentDescription = "Mode Browser Penuh",
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                     Text(
                         text = if (isOnline) "NET" else "OFF",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = if (isOnline) DeckGreen else DeckAmber,
                         fontFamily = FontFamily.Monospace
                     )
-                    if (batteryPct != null) {
+
+                    // Battery Pill (visible in fullscreen!)
+                    val pct = batteryStatus.percent
+                    val batteryTint = when {
+                        batteryStatus.isCharging -> DeckGreen
+                        pct != null && pct <= 20 -> Color(0xFFEF4444)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                    val batteryIcon = when {
+                        batteryStatus.isCharging -> Icons.Filled.BatteryChargingFull
+                        pct != null && pct <= 15 -> Icons.Filled.BatteryAlert
+                        else -> Icons.Filled.BatteryFull
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = batteryIcon,
+                            contentDescription = "Baterai",
+                            tint = batteryTint,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Text(
-                            text = "$batteryPct%",
+                            text = if (pct != null) "$pct%" else "--%",
                             style = MaterialTheme.typography.labelMedium,
+                            color = batteryTint,
                             fontFamily = FontFamily.Monospace
                         )
                     }
+
+                    // Clock & Date (visible in fullscreen!)
                     if (clockText.isNotBlank()) {
-                        Text(
-                            text = clockText,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = clockText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            if (dateText.isNotBlank()) {
+                                Text(
+                                    text = dateText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1233,6 +1621,7 @@ fun DexPermissionsSetupDialog(
     onShowMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var status by remember { mutableStateOf(DesktopLauncherManager.inspectPermissions(context)) }
 
@@ -1264,12 +1653,12 @@ fun DexPermissionsSetupDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 430.dp)
+                    .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    "Aktifkan izin & pengaturan sistem berikut agar Cyber Deck bisa menjadi Home Launcher dan membuka WhatsApp, YouTube, dll. sebagai jendela floating:",
+                    "Aktifkan izin & pengaturan sistem berikut agar Cyber Deck bisa menjadi Home Launcher, menampilkan notif di taskbar, dan membuka WA/YouTube sebagai jendela floating:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1304,17 +1693,76 @@ fun DexPermissionsSetupDialog(
                     }
                 )
 
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                imageVector = if (status.freeformReady && status.isForceResizableEnabled) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+                                contentDescription = null,
+                                tint = if (status.freeformReady) DeckGreen else DeckAmber,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text("3. Freeform / Floating Windows (WA, YouTube)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            text = "Freeform: ${if (status.freeformReady) "AKTIF" else "MATI"} • Force Resizable: ${if (status.isForceResizableEnabled) "AKTIF" else "MATI"}\n" +
+                                "Jika terbuka Split Screen/Fullscreen di One UI, pastikan di Developer Options aktifkan 'Enable freeform windows' + 'Force activities to be resizable' lalu restart tablet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    onShowMessage(DesktopLauncherManager.openDeveloperOptionsSettings(context))
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Developer Options", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (status.canWriteSecureSettings) {
+                                Button(
+                                    onClick = {
+                                        DesktopLauncherManager.tryEnableFreeformFlagsDirectly(context)
+                                            .onSuccess { msg ->
+                                                status = DesktopLauncherManager.inspectPermissions(context)
+                                                onShowMessage(msg)
+                                            }
+                                            .onFailure { err -> onShowMessage(err.message ?: "Gagal") }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Aktifkan", maxLines = 1)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboard.setText(
+                                            AnnotatedString(DesktopLauncherManager.buildFreeformAdbCommand(context.packageName))
+                                        )
+                                        onShowMessage("Perintah ADB disalin ke clipboard (opsional jika Developer Options tidak menyimpan).")
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Salin ADB", maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 PermissionShortcutRow(
-                    title = "3. Freeform / Floating Windows (WA, YouTube, dll.)",
-                    subtitle = if (status.isFreeformEnabledInSettings || status.hasFreeformFeature) {
-                        "Dukungan Freeform terdeteksi. Di One UI, pastikan Multi-window untuk semua aplikasi juga aktif."
-                    } else {
-                        "Buka Developer Options lalu aktifkan 'Enable freeform windows' & 'Force activities to be resizable'."
-                    },
-                    granted = status.isFreeformEnabledInSettings || status.hasFreeformFeature,
-                    buttonLabel = "Buka Developer Options",
+                    title = "4. Akses Notifikasi Taskbar",
+                    subtitle = if (status.notificationAccessGranted) "Aktif — notif sistem, WA, YouTube tampil di taskbar."
+                    else "Aktifkan agar notif muncul di panel Notifikasi taskbar saat fullscreen.",
+                    granted = status.notificationAccessGranted,
+                    buttonLabel = "Buka Akses Notifikasi",
                     onAction = {
-                        onShowMessage(DesktopLauncherManager.openDeveloperOptionsSettings(context))
+                        onShowMessage(NotificationCenterStore.openNotificationAccessSettings(context))
                     }
                 )
 
@@ -1323,7 +1771,7 @@ fun DexPermissionsSetupDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("4. Shortcut Samsung One UI / Baterai", style = MaterialTheme.typography.titleSmall)
+                        Text("5. Shortcut Samsung One UI / Baterai", style = MaterialTheme.typography.titleSmall)
                         Text(
                             "Untuk Galaxy Tab A9: aktifkan Multi-jendela untuk semua aplikasi (Fitur Lanjutan → Labs) dan atur baterai Cyber Deck ke Tidak Dibatasi.",
                             style = MaterialTheme.typography.bodySmall,

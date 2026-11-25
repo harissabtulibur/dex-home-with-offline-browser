@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -128,6 +129,7 @@ fun BrowserScreen(
     onOpenBookmarks: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    onReturnToLauncher: (() -> Unit)? = null,
     onShowMessage: (String) -> Unit
 ) {
     val tabs by viewModel.tabs.collectAsStateWithLifecycle()
@@ -177,11 +179,16 @@ fun BrowserScreen(
         }
     }
 
-    BackHandler(enabled = fullscreenCustomView != null) {
-        viewModel.exitFullscreenCustomView()
-    }
-
     val currentTab = activeTab
+    BackHandler(enabled = fullscreenCustomView != null || onReturnToLauncher != null) {
+        if (fullscreenCustomView != null) {
+            viewModel.exitFullscreenCustomView()
+        } else if (currentTab != null && (currentTab.canGoBack || currentTab.url != "about:cyberdeck")) {
+            viewModel.goBack()
+        } else {
+            onReturnToLauncher?.invoke()
+        }
+    }
     val isBookmarked = currentTab != null &&
         currentTab.url != "about:cyberdeck" &&
         bookmarks.any { it.url == currentTab.url }
@@ -335,6 +342,18 @@ fun BrowserScreen(
                     contentDescription = if (currentTab?.isLoading == true) "Stop" else "Reload"
                 )
             }
+            if (onReturnToLauncher != null) {
+                IconButton(
+                    onClick = onReturnToLauncher,
+                    modifier = Modifier.size(btnSize)
+                ) {
+                    Icon(
+                        Icons.Filled.GridView,
+                        contentDescription = "Kembali ke Launcher",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
             IconButton(
                 onClick = { viewModel.goHome() },
                 modifier = Modifier.size(btnSize)
@@ -483,6 +502,22 @@ fun BrowserScreen(
                     onDismissRequest = { showOverflowMenu = false },
                     modifier = Modifier.widthIn(min = 220.dp, max = 280.dp)
                 ) {
+                    if (onReturnToLauncher != null) {
+                        DropdownMenuItem(
+                            text = { Text("Kembali ke DeX Launcher") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.GridView,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                showOverflowMenu = false
+                                onReturnToLauncher()
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = {
                             Text(

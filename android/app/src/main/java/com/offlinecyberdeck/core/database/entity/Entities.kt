@@ -205,7 +205,7 @@ data class AppSettingsEntity(
     val brightnessOverrideEnabled: Boolean = false,
     val screenBrightnessPercent: Int = 80,
     val nightDimmerPercent: Int = 0,
-    val immersiveFullscreen: Boolean = false,
+    val immersiveFullscreen: Boolean = true,
     val hideNavChromeInBrowser: Boolean = false,
     val addressBarHeightDp: Int = 40,
     val addressBarFontSp: Int = 14,

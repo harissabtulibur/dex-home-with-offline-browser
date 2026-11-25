@@ -29,12 +29,23 @@ data class DesktopPermissionStatus(
     val isDefaultHomeLauncher: Boolean,
     val canDrawOverlays: Boolean,
     val isFreeformEnabledInSettings: Boolean,
+    val isForceResizableEnabled: Boolean,
     val hasFreeformFeature: Boolean,
-    val notificationsGranted: Boolean
+    val notificationsGranted: Boolean,
+    val notificationAccessGranted: Boolean,
+    val canWriteSecureSettings: Boolean
 ) {
+    val freeformReady: Boolean
+        get() = isFreeformEnabledInSettings || hasFreeformFeature
+
     val allCoreReady: Boolean
-        get() = isDefaultHomeLauncher && canDrawOverlays && (isFreeformEnabledInSettings || hasFreeformFeature)
+        get() = isDefaultHomeLauncher && canDrawOverlays && freeformReady
 }
+
+data class BatteryStatusInfo(
+    val percent: Int?,
+    val isCharging: Boolean
+)
 
 object DesktopLauncherManager {
 
@@ -54,20 +65,47 @@ object DesktopLauncherManager {
         val devFreeform = runCatching {
             Settings.Global.getInt(context.contentResolver, "enable_freeform_support", 0) == 1
         }.getOrDefault(false)
+        val forceResizable = runCatching {
+            Settings.Global.getInt(context.contentResolver, "force_resizable_activities", 0) == 1
+        }.getOrDefault(false)
         val sysFreeform = pm.hasSystemFeature(PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEMENT)
         val notifOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
         } else true
+        val notifAccessOk = NotificationCenterStore.isNotificationAccessEnabled(context)
+        val writeSecureOk = context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==
+            PackageManager.PERMISSION_GRANTED
 
         return DesktopPermissionStatus(
             isDefaultHomeLauncher = isHome,
             canDrawOverlays = canOverlay,
             isFreeformEnabledInSettings = devFreeform,
+            isForceResizableEnabled = forceResizable,
             hasFreeformFeature = sysFreeform,
-            notificationsGranted = notifOk
+            notificationsGranted = notifOk,
+            notificationAccessGranted = notifAccessOk,
+            canWriteSecureSettings = writeSecureOk
         )
     }
+
+    fun tryEnableFreeformFlagsDirectly(context: Context): Result<String> {
+        return runCatching {
+            val granted = context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==
+                PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                error("Izin sistem WRITE_SECURE_SETTINGS belum aktif. Aktifkan manual di Developer Options atau jalankan ADB sekali.")
+            }
+            Settings.Global.putInt(context.contentResolver, "enable_freeform_support", 1)
+            Settings.Global.putInt(context.contentResolver, "force_resizable_activities", 1)
+            "Freeform & Resizable berhasil diaktifkan! Restart tablet / buka ulang app agar One UI menerapkannya."
+        }
+    }
+
+    fun buildFreeformAdbCommand(packageName: String): String =
+        "adb shell pm grant $packageName android.permission.WRITE_SECURE_SETTINGS && " +
+            "adb shell settings put global enable_freeform_support 1 && " +
+            "adb shell settings put global force_resizable_activities 1"
 
     private fun isResolvedAsDefaultHome(context: Context): Boolean {
         val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
@@ -231,13 +269,13 @@ object DesktopLauncherManager {
 
             baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (floating) {
-                baseIntent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+                // IMPORTANT: Do NOT set FLAG_ACTIVITY_LAUNCH_ADJACENT — that flag forces Android/One UI into Split-Screen!
                 val dm = context.resources.displayMetrics
                 val w = dm.widthPixels.coerceAtLeast(600)
                 val h = dm.heightPixels.coerceAtLeast(600)
                 val offset = (cascadeIndex % 5) * (w / 40).coerceAtLeast(20)
-                val winW = (w * 0.68f).toInt().coerceAtLeast(420)
-                val winH = (h * 0.76f).toInt().coerceAtLeast(440)
+                val winW = (w * 0.64f).toInt().coerceAtLeast(420)
+                val winH = (h * 0.74f).toInt().coerceAtLeast(440)
                 val left = ((w - winW) / 2 + offset).coerceIn(24, (w - winW - 24).coerceAtLeast(24))
                 val top = ((h - winH) / 2 + offset).coerceIn(24, (h - winH - 64).coerceAtLeast(24))
                 val bounds = Rect(left, top, left + winW, top + winH)
@@ -246,23 +284,30 @@ object DesktopLauncherManager {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     runCatching { options.setLaunchBounds(bounds) }
                 }
-                // WINDOWING_MODE_FREEFORM = 5 (supported on One UI / AOSP when freeform windows are enabled)
+                // WINDOWING_MODE_FREEFORM = 5 (requires Freeform Windows enabled in Developer Options or One UI Labs)
                 runCatching {
                     ActivityOptions::class.java
                         .getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
                         .invoke(options, 5)
                 }
 
+                val perm = inspectPermissions(context)
                 val startedFloating = runCatching {
                     context.startActivity(baseIntent, options.toBundle())
                     true
                 }.getOrDefault(false)
 
-                if (!startedFloating) {
-                    context.startActivity(baseIntent)
-                    "Dibuka normal (aktifkan Freeform Windows di Pengaturan Izin DeX agar mengambang)."
-                } else {
-                    "Membuka mode floating window (gunakan bar atas sistem untuk Minimize/Maximize/Close)."
+                when {
+                    !startedFloating -> {
+                        context.startActivity(baseIntent)
+                        "Dibuka normal (sistem menolak launch bounds)."
+                    }
+                    !perm.freeformReady -> {
+                        "Mode Freeform belum aktif di sistem — buka Izin DeX → Developer Options untuk mengaktifkan 'Enable freeform windows'."
+                    }
+                    else -> {
+                        "Membuka jendela floating freeform (gunakan bar atas jendela untuk Minimize/Maximize/Close)."
+                    }
                 }
             } else {
                 context.startActivity(baseIntent)
@@ -271,11 +316,14 @@ object DesktopLauncherManager {
         }
     }
 
-    fun readBatteryPercent(context: Context): Int? {
+    fun readBatteryStatus(context: Context): BatteryStatusInfo {
         return runCatching {
-            val bm = context.getSystemService(BatteryManager::class.java) ?: return null
-            val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            if (pct in 0..100) pct else null
-        }.getOrNull()
+            val bm = context.getSystemService(BatteryManager::class.java)
+            val pct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+            val charging = bm?.isCharging == true
+            BatteryStatusInfo(percent = pct, isCharging = charging)
+        }.getOrDefault(BatteryStatusInfo(percent = null, isCharging = false))
     }
+
+    fun readBatteryPercent(context: Context): Int? = readBatteryStatus(context).percent
 }

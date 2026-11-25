@@ -45,6 +45,7 @@ class CoreLogicTest {
         assertEquals(0.95f, defaults.uiFontScale, 0.001f)
         assertFalse(defaults.hideToolbarInLandscape)
         assertTrue(defaults.desktopLauncherMode)
+        assertTrue(defaults.immersiveFullscreen)
         assertFalse(defaults.dexSetupPromptDismissed)
     }
 }

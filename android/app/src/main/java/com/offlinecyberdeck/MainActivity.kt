@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Public
@@ -383,11 +384,15 @@ private fun CyberDeckRootShell(
         }
     }
 
-    BackHandler(enabled = overlay != null || currentDest != MainDestination.BROWSER) {
+    BackHandler(enabled = overlay != null || currentDest != MainDestination.BROWSER || !settings.desktopLauncherMode) {
         if (overlay != null) {
             overlay = null
-        } else {
+        } else if (currentDest != MainDestination.BROWSER) {
             currentDest = MainDestination.BROWSER
+        } else if (!settings.desktopLauncherMode) {
+            scope.launch {
+                app.settingsRepository.updateSettings { it.copy(desktopLauncherMode = true) }
+            }
         }
     }
 
@@ -454,6 +459,16 @@ private fun CyberDeckRootShell(
         Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             if (useRail && !hideNavChrome) {
                 NavigationRail {
+                    NavigationRailItem(
+                        selected = false,
+                        onClick = {
+                            scope.launch {
+                                app.settingsRepository.updateSettings { it.copy(desktopLauncherMode = true) }
+                            }
+                        },
+                        icon = { Icon(Icons.Filled.GridView, contentDescription = "DeX Launcher") },
+                        label = { Text("Launcher") }
+                    )
                     navItems.forEach { (dest, icon) ->
                         NavigationRailItem(
                             selected = currentDest == dest,
@@ -527,6 +542,11 @@ private fun CyberDeckRootShell(
                                     onOpenBookmarks = { currentDest = MainDestination.BOOKMARKS },
                                     onOpenHistory = { currentDest = MainDestination.HISTORY },
                                     onOpenSettings = { currentDest = MainDestination.SETTINGS },
+                                    onReturnToLauncher = {
+                                        scope.launch {
+                                            app.settingsRepository.updateSettings { it.copy(desktopLauncherMode = true) }
+                                        }
+                                    },
                                     onShowMessage = showMessage
                                 )
                             }

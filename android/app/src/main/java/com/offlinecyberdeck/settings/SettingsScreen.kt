@@ -531,7 +531,7 @@ fun SettingsScreen(
                                     brightnessOverrideEnabled = false,
                                     screenBrightnessPercent = 80,
                                     nightDimmerPercent = 0,
-                                    immersiveFullscreen = false,
+                                    immersiveFullscreen = true,
                                     hideNavChromeInBrowser = false,
                                     addressBarHeightDp = 40,
                                     addressBarFontSp = 14,

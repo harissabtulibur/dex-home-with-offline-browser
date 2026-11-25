@@ -87,7 +87,7 @@ class CyberDeckConverters {
         RecentSearchEntity::class,
         AppSettingsEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(CyberDeckConverters::class)
@@ -143,6 +143,12 @@ abstract class CyberDeckDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("UPDATE app_settings SET immersiveFullscreen = 1")
+            }
+        }
+
         fun getInstance(context: Context): CyberDeckDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -150,7 +156,7 @@ abstract class CyberDeckDatabase : RoomDatabase() {
                     CyberDeckDatabase::class.java,
                     "cyber_deck.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
