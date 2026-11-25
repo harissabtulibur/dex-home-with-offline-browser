@@ -185,14 +185,18 @@ fun DesktopLauncherScreen(
     var clockText by remember { mutableStateOf("") }
     var batteryPct by remember { mutableStateOf<Int?>(null) }
 
-    // Open Cyber Deck Browser inside the DeX desktop on initial start
+    // Open Cyber Deck Browser as a floating DeX window on initial start so desktop & controls are visible
     LaunchedEffect(Unit) {
         if (windows.isEmpty()) {
             windows += DesktopWindowState(
                 id = "main_browser",
                 kind = DesktopWindowKind.BROWSER,
                 title = "Cyber Deck Browser",
-                isMaximized = true,
+                isMaximized = false,
+                xDp = 130f,
+                yDp = 24f,
+                widthDp = 720f,
+                heightDp = 440f,
                 zIndex = ++topZ
             )
         }
